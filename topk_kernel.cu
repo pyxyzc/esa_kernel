@@ -17,9 +17,11 @@ int main() {
     const int B = 4;        // number of batches
     // 1) generate random data
     std::vector<float> h_data(B * N);
-    std::mt19937 rng(123);
+    std::mt19937 rng(123 * 10 + B);
     std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-    for (int i = 0; i < B * N; ++i) h_data[i] = dist(rng);
+    for(int i = 0; i < B * N; ++i){
+        h_data[i] = dist(rng);
+    }
 
     // 2) allocate and copy to device
     float* d_data;
@@ -62,11 +64,10 @@ int main() {
 
     // 5) copy top-K indices back
     std::vector<int> h_topk(B * K);
-    cudaMemcpy(h_topk.data(), d_sorted_idx, B * K * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_topk.data(), d_sorted_idx, B * N * sizeof(int), cudaMemcpyDeviceToHost);
 
     // 6) compute CPU ground-truth per batch
     std::vector<int> gt_all;
-    gt_all.reserve(B * K);
     for (int batch = 0; batch < B; ++batch) {
         std::vector<int> gt(N);
         for (int j = 0; j < N; ++j) gt[j] = j;
@@ -79,7 +80,7 @@ int main() {
     for (int i = 0; i < B; ++i) {
         printf("host batch %d\n", i);
         for(int j = 0; j < K; ++j){
-            printf("%d ", gt_all[i * N + j]);
+            printf("%d ", gt_all[i * K + j]);
         }
         puts("");
         printf("device batch %d\n", i);
@@ -88,8 +89,14 @@ int main() {
         }
         puts("");
         puts("");
+
+        for(int j = 0; j < K; ++j){
+            if(h_topk[i * N + j] != gt_all[i * K + j]){
+                ok = false;
+            }
+        }
     }
-    // std::cout << (ok ? "PASS\n" : "FAIL\n");
+    std::cout << (ok ? "PASS\n" : "FAIL\n");
 
     // 8) cleanup
     cudaFree(d_data);

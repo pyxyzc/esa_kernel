@@ -3,3 +3,4 @@ make.log
 copy_compute_test
 matmul2
 .project
+topk_kernel
