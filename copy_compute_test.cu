@@ -1,5 +1,6 @@
 #include <cuda_runtime.h>
 #include <stdio.h>
+#include <math.h>
 
 // Heavy compute kernel
 __global__ void heavy_compute(float *out, size_t N, int repeat) {
@@ -75,8 +76,8 @@ void run_experiment_2(int num_copies, size_t chunk_size, int kernel_repeat) {
     float **d_bufs = new float*[num_copies];
     float **h_bufs = new float*[num_copies];
     cudaStream_t copy_stream, compute_stream;
-    cudaStreamCreate(&copy_stream);
-    cudaStreamCreate(&compute_stream);
+    cudaStreamCreateWithFlags(&copy_stream, cudaStreamNonBlocking);
+    cudaStreamCreateWithFlags(&compute_stream, cudaStreamNonBlocking);
 
     // Allocate device/host buffers
     for (int i = 0; i < num_copies; ++i) {
@@ -90,7 +91,7 @@ void run_experiment_2(int num_copies, size_t chunk_size, int kernel_repeat) {
 
     // Init compute buffer
     cudaMemsetAsync(d_compute, 0, chunk_size * sizeof(float), compute_stream);
-    cudaDeviceSynchronize();
+    cudaStreamSynchronize(compute_stream);
 
     // Start timing
     cudaEvent_t start, end;
