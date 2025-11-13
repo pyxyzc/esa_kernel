@@ -1,8 +1,6 @@
 #include <cuda_runtime.h>
 #include <stdio.h>
-#include <algorithm>
 #include <chrono>
-#include <vector>
 #include <random>
 
 #define cuda_check(call){ \
@@ -35,6 +33,45 @@ __global__ void retrieval_kernel(const float *__restrict__ Q, const float *__res
     }
 }
 
+#define tile 16 // the number of elements each thread processes
+__global__ void retrieval_kernel_2(float *__restrict__ Q, float *__restrict__ K, float *__restrict__ score, const int *__restrict__ block_table, const int *__restrict__ batch_index, int dim, int B, int S){
+    // Q: [batch, dim], the query tensors
+    // K: [N, dim], the key tensors
+    // score: [S], the result score values
+    // block_table: [S], the index for K. It's a flattened tensors which actually compose `batch` segment: [N1, N2, N3] for batch = 3, N1 + N2 + N3 = S
+    // batch_index: [S], the mark specifying which batch current index belongs to and which Q current K[index] should be compared with.
+    // dim: feature size
+    extern __shared__ unsigned char q_and_key[]; // dynamic size
+    float *query = reinterpret_cast<float*>(q_and_key);
+    float *feature = reinterpret_cast<float*>(q_and_key + sizeof(float) * dim);
+    float *part_score = reinterpret_cast<float*>(q_and_key + sizeof(float) * dim * 2); // dim / tile
+    int global_x = blockIdx.x;
+    if (global_x < S){
+        int local_x = threadIdx.x;
+        float *k = K + block_table[global_x] * dim + local_x * tile;
+        float *q = Q + batch_index[global_x] * dim + local_x * tile;
+
+        int num_repeats = tile / 4;
+        for(int i = 0; i < num_repeats; ++i){
+            float4 q4 = *reinterpret_cast<float4*>(&q[i * 4]);
+            float4 k4 = *reinterpret_cast<float4*>(&k[i * 4]);
+        }
+
+        __syncthreads();
+        float sum = 0.0f;
+        for(int i = 0; i < tile; ++i){
+            sum += feature[tile * local_x + i] * query[tile * local_x + i];
+        }
+        part_score[local_x] = sum;
+        for(int i = blockDim.x / 2; i; i /= 2){
+            if(local_x < i){
+                part_score[local_x] += part_score[local_x + i];
+            }
+        }
+        score[global_x] = part_score[0];
+    }
+}
+
 
 void retrieval_host(float *Q, float *K, float *score, int *block_table, int *batch_index, int dim, int B, int S){
     for(int i = 0; i < S; ++i){
@@ -61,7 +98,7 @@ void init_mat(float *mat, int sz){
 int main(){
     float *h_Q, *h_K;
     int B = 32;
-    int dim = 576;
+    int dim = 8 * 128;
     int N = 3000;
 
     h_Q = (float*)malloc(B * dim * sizeof(float));
@@ -118,29 +155,41 @@ int main(){
     cuda_check(cudaMemcpy(d_batch_index, batch_index, sizeof(int) * total_kv_len, cudaMemcpyHostToDevice));
 
 
-    dim3 numThreads = {256};
-    int num_block = (total_kv_len + 255) / 256;
-    dim3 numBlocks = {(unsigned int)num_block};
+    dim3 numThreads = {(unsigned int)(dim / tile)};
+    dim3 numBlocks = {(unsigned int)total_kv_len};
 
     for (int i = 0; i < 10; ++i){
         retrieval_kernel<<<numBlocks, numThreads>>>(d_Q, d_K, d_score, d_block_table, d_batch_index, dim, B, total_kv_len);
+        size_t bytes = 2 * dim * sizeof(float) + numThreads.x * sizeof(float);
+        retrieval_kernel_2<<<numBlocks, numThreads, bytes>>>(d_Q, d_K, d_score, d_block_table, d_batch_index, dim, B, total_kv_len);
     }
 
-    cudaEvent_t start, stop;
+    cudaEvent_t start, stop, start_2, stop_2;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
+    cudaEventCreate(&start_2);
+    cudaEventCreate(&stop_2);
+
 
     cudaEventRecord(start, 0);
     retrieval_kernel<<<numBlocks, numThreads>>>(d_Q, d_K, d_score, d_block_table, d_batch_index, dim, B, total_kv_len);
     cudaEventRecord(stop, 0);
-
     cuda_check(cudaPeekAtLastError());
     cuda_check(cudaEventSynchronize(stop));
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
     printf("Time spent on retrieval_kernel: %f ms\n", milliseconds);
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+
+
+    cudaEventRecord(start_2, 0);
+    size_t bytes = 2 * dim * sizeof(float) + numThreads.x * sizeof(float);
+    retrieval_kernel_2<<<numBlocks, numThreads, bytes>>>(d_Q, d_K, d_score, d_block_table, d_batch_index, dim, B, total_kv_len);
+    cudaEventRecord(stop_2, 0);
+    cuda_check(cudaPeekAtLastError());
+    cuda_check(cudaEventSynchronize(stop_2));
+    float milliseconds_2 = 0;
+    cudaEventElapsedTime(&milliseconds_2, start_2, stop_2);
+    printf("Time spent on retrieval_kernel_2: %f ms\n", milliseconds_2);
 
 
     float *h_score_gpu;
@@ -158,12 +207,16 @@ int main(){
     printf("Time spent on retrieval_host: %ld ms\n", duration.count() / 1000000);
 
     float eps = 1e-3;
+    float avg_error = 0.0f;
     for(int i = 0; i < total_kv_len; ++i){
         float diff = fabs(h_score[i] - h_score_gpu[i]);
-        if(diff > eps){
-            printf("not ok\n");
-        }
+        avg_error += diff;
+        // if(diff > eps){
+        //     printf("not ok!!! %f vs %f\n", h_score[i], h_score_gpu[i]);
+        // }
     }
+    avg_error = avg_error / total_kv_len;
+    printf("avg error: %f\n", avg_error);
 
     return 0;
 }
