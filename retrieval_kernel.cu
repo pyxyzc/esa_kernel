@@ -13,22 +13,25 @@
 } \
 
 
-__global__ void retrieval_kernel(float *Q, float *K, float *score, int *block_table, int *batch_index, int dim, int B, int S){
+__global__ void retrieval_kernel(const float *__restrict__ Q, const float *__restrict__ K, float *__restrict__ score, const int *__restrict__ block_table, const int *__restrict__ batch_index, int dim, int B, int S){
     // Q: [batch, dim], the query tensors
     // K: [N, dim], the key tensors
     // score: [S], the result score values
     // block_table: [S], the index for K. It's a flattened tensors which actually compose `batch` segment: [N1, N2, N3] for batch = 3, N1 + N2 + N3 = S
     // batch_index: [S], the mark specifying which batch current index belongs to and which Q current K[index] should be compared with.
     // dim: feature size
-    int global_x = blockIdx.x * blockDim.x + threadIdx.x;
-    if(global_x < S){
-        int k_index = block_table[global_x];
-        int batch_id = batch_index[global_x];
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx < S){
+        int k_index = block_table[idx];
+        int batch_id = batch_index[idx];
+        const float* pQ = Q + batch_id * dim;
+        const float* pK = K + k_index * dim;
         float s = 0.0f;
+        #pragma unroll 8
         for(int i = 0; i < dim; ++i){
-            s += Q[batch_id * dim + i] * K[k_index * dim + i];
+            s += pQ[i] * pK[i];
         }
-        score[global_x] = s;
+        score[idx] = s;
     }
 }
 
@@ -113,8 +116,8 @@ int main(){
     cuda_check(cudaMemcpy(d_batch_index, batch_index, sizeof(int) * total_kv_len, cudaMemcpyHostToDevice));
 
 
-    dim3 numThreads = {32};
-    int num_block = (total_kv_len + 31) / 32;
+    dim3 numThreads = {256};
+    int num_block = (total_kv_len + 255) / 256;
     dim3 numBlocks = {(unsigned int)num_block};
 
     retrieval_kernel<<<numBlocks, numThreads>>>(d_Q, d_K, d_score, d_block_table, d_batch_index, dim, B, total_kv_len);
