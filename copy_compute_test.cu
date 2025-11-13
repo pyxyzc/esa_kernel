@@ -16,8 +16,8 @@ void run_experiment(int num_copies, size_t chunk_size, int kernel_repeat) {
     float **d_bufs = new float*[num_copies];
     float **h_bufs = new float*[num_copies];
     cudaStream_t copy_stream, compute_stream;
-    cudaStreamCreate(&copy_stream);
-    cudaStreamCreate(&compute_stream);
+    cudaStreamCreateWithFlags(&copy_stream, cudaStreamNonBlocking);
+    cudaStreamCreateWithFlags(&compute_stream, cudaStreamNonBlocking);
 
     // Allocate device/host buffers
     for (int i = 0; i < num_copies; ++i) {
@@ -31,7 +31,7 @@ void run_experiment(int num_copies, size_t chunk_size, int kernel_repeat) {
 
     // Init compute buffer
     cudaMemsetAsync(d_compute, 0, chunk_size * sizeof(float), compute_stream);
-    cudaDeviceSynchronize();
+    cudaStreamSynchronize(compute_stream);
 
     // Start timing
     cudaEvent_t start, end;
@@ -96,7 +96,7 @@ void run_experiment_2(int num_copies, size_t chunk_size, int kernel_repeat) {
     cudaEvent_t start, end;
     cudaEventCreate(&start);
     cudaEventCreate(&end);
-    cudaEventRecord(start, 0);
+    cudaEventRecord(start, copy_stream);
 
     // Enqueue many DtoH copies (device → host) in copy_stream
     for (int i = 0; i < num_copies; ++i)
@@ -106,7 +106,7 @@ void run_experiment_2(int num_copies, size_t chunk_size, int kernel_repeat) {
 
     // cudaStreamSynchronize(copy_stream);
     cudaStreamSynchronize(compute_stream);
-    cudaEventRecord(end, 0);
+    cudaEventRecord(end, copy_stream);
     cudaEventSynchronize(end);
 
 
