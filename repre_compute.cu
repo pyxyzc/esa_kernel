@@ -12,6 +12,15 @@
 
 
 __global__ void extract_repre(const float *key_cache, float *repre_cache, const int *block_table, int block_size, int dim) {
+    // key_cache: [N, block_size, dim]
+    // repre_cache: [N, 1, dim]
+    // block_table: [S]
+    // repre_cache[block_table[i]] = mean(key_cache[block_table[i]], 0)
+    // NOTE: The last `dimtension` can be processed parallelly. But the
+    // `block_size` dim is correlated with each other.
+    // So blocks (threads) are tiled for blocks (key_cache)
+    // And threads in a block handles different dim
+
     int idx = blockIdx.x;
     int block_id = block_table[idx];
     const float* key_ptr = key_cache + block_id * block_size * dim;
@@ -56,8 +65,8 @@ void host_extract_repre(const float *key_cache, float *repre_cache, const int *b
 int main(){
     int N = 10000;
     int block_size = 128;
-    int dim = 64;
-    int block_number = std::min(32 * 12800 / 128, N);
+    int dim = 576;
+    int block_number = std::min(32 * 12800 / block_size, N);
     // host allocations
     float *h_key_cache = (float*)malloc(N * block_size * dim * sizeof(float));
     float *h_repre = (float*)malloc(N * dim * sizeof(float));
