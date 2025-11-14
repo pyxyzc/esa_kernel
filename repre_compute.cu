@@ -55,10 +55,10 @@ void host_extract_repre(const float *key_cache, float *repre_cache, const int *b
 }
 
 int main(){
-    int N = 1000;
+    int N = 10000;
     int block_size = 128;
     int dim = 64;
-    int block_number = N;
+    int block_number = std::min(32 * 12800 / 128, N);
     // host allocations
     float *h_key_cache = (float*)malloc(N * block_size * dim * sizeof(float));
     float *h_repre = (float*)malloc(N * dim * sizeof(float));
@@ -67,7 +67,7 @@ int main(){
 
     init_mat(h_key_cache, N * block_size * dim);
     for(int i = 0; i < block_number; ++i){
-        h_block_table[i] = i;
+        h_block_table[i] = (i + 1) * 3 % N;
     }
 
     // device allocations
