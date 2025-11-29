@@ -160,17 +160,26 @@ void cuda_retrieval(const std::vector<torch::Tensor> &query_list, torch::Tensor 
     dim3 numBlocks = {(unsigned int) s};
     size_t bytes = numThreads.x * sizeof(float);
 
-    // build array of Q pointers
+
     int batch = query_list.size();
-    std::vector<float*> h_Q_ptrs(batch);
+    float** Q_ptrs = nullptr;
+    cudaMallocManaged(&Q_ptrs, batch * sizeof(float*));
     for(int i = 0; i < batch; ++i) {
-        h_Q_ptrs[i] = query_list[i].data_ptr<float>();
+        Q_ptrs[i] = query_list[i].data_ptr<float>();
     }
-    float **d_Q_ptrs;
-    cuda_check(cudaMalloc(&d_Q_ptrs, batch * sizeof(float*)));
-    cuda_check(cudaMemcpy(d_Q_ptrs, h_Q_ptrs.data(), batch * sizeof(float*), cudaMemcpyHostToDevice));
-    retrieval_kernel_3<<<numBlocks, numThreads, bytes>>>(d_Q_ptrs, repre_cache.data_ptr<float>(), score.data_ptr<float>(), repre_index.data_ptr<int>(), q_index.data_ptr<int>(), dim, s);
-    cuda_check(cudaFree(d_Q_ptrs));
+
+
+    // build array of Q pointers
+    // std::vector<float*> h_Q_ptrs(batch);
+    // for(int i = 0; i < batch; ++i) {
+    //     h_Q_ptrs[i] = query_list[i].data_ptr<float>();
+    // }
+    // float **d_Q_ptrs;
+    // cuda_check(cudaMalloc(&d_Q_ptrs, batch * sizeof(float*)));
+    // cuda_check(cudaMemcpy(d_Q_ptrs, h_Q_ptrs.data(), batch * sizeof(float*), cudaMemcpyHostToDevice));
+
+    retrieval_kernel_3<<<numBlocks, numThreads, bytes>>>(Q_ptrs, repre_cache.data_ptr<float>(), score.data_ptr<float>(), repre_index.data_ptr<int>(), q_index.data_ptr<int>(), dim, s);
+    // cuda_check(cudaFree(d_Q_ptrs));
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

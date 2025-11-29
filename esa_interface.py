@@ -22,10 +22,10 @@ lib = load(
 )
 cuda_retrieval = lib.cuda_retrieval
 
-b = 100
-s = 100
+b = 4
+s = 10
 dim = 576
-N = 1000
+N = 100
 query_list = []
 for i in range(b):
     query_list.append(torch.rand(dim, dtype=torch.float32).cuda())
@@ -34,9 +34,11 @@ for i in range(b):
 repre_cache = torch.randn(N, dim, dtype = torch.float32).cuda()
 repre_table = torch.arange(0, s, dtype = torch.int32).cuda()
 q_table = torch.arange(0, s, dtype = torch.int32).cuda()
+q_table = q_table % b
 score = torch.zeros(s, dtype = torch.float32).cuda()
 start = time.time()
 cuda_retrieval(query_list, repre_cache, q_table, repre_table, score)
+print("launch spent: ", time.time() - start)
 torch.cuda.synchronize()
 elapsed_cuda = time.time() - start
 print(f"cuda_retrieval time: {elapsed_cuda:.6f} s")
