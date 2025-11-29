@@ -1,5 +1,6 @@
 import torch
 from torch.utils.cpp_extension import load
+import time
 
 torch.set_grad_enabled(False)
 
@@ -25,14 +26,20 @@ b = 100
 s = 100
 dim = 576
 N = 1000
-query = torch.randn(b, dim, dtype = torch.float32).cuda()
+query_list = []
+for i in range(b):
+    query_list.append(torch.rand(dim, dtype=torch.float32).cuda())
+
+
 repre_cache = torch.randn(N, dim, dtype = torch.float32).cuda()
 repre_table = torch.arange(0, s, dtype = torch.int32).cuda()
 q_table = torch.arange(0, s, dtype = torch.int32).cuda()
 score = torch.zeros(s, dtype = torch.float32).cuda()
-cuda_retrieval(query, repre_cache, q_table, repre_table, score)
+cuda_retrieval(query_list, repre_cache, q_table, repre_table, score)
 print("score: ", score)
 
+
+query = torch.stack(query_list)
 score_gt = (query[q_table] * repre_cache[repre_table]).sum(-1)
 print("score_gt: ", score_gt)
 
