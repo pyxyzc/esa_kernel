@@ -13,9 +13,9 @@
 } \
 
 // kernel to initialize indices [0..N)
-__global__ void init_indices(int* idx, int total, int batch_size) {
+__global__ void init_indices(int* idx, int total, int N) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < total) idx[i] = i % batch_size;
+    if (i < total) idx[i] = i % N;
 }
 
 int main() {
