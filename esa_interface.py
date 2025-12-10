@@ -8,33 +8,21 @@ torch.set_grad_enabled(False)
 # Load the CUDA kernel as a python module
 lib = load(
     name="esa_utils",
-    sources=["esa_utils.cu"],
-    extra_cuda_cflags=[
-        "-O3",
-        "-U__CUDA_NO_HALF_OPERATORS__",
-        "-U__CUDA_NO_HALF_CONVERSIONS__",
-        "-U__CUDA_NO_HALF2_OPERATORS__",
-        "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
-        "--expt-relaxed-constexpr",
-        "--expt-extended-lambda",
-        "--use_fast_math",
-    ],
+    sources=["esa_interface.cu"],
     extra_cflags=["-std=c++17"],
 )
 esa_retrieval = lib.esa_retrieval
 esa_topk = lib.esa_topk
 esa_repre = lib.esa_repre
 
-b = 1
-s = 10
+b = 10
+s = 100
 dim = 576
 N = 100
 query_list = []
 dtype = torch.float16
 for i in range(b):
     query_list.append(torch.rand(dim, dtype=dtype).cuda())
-
-
 repre_cache = torch.randn(N, dim, dtype = dtype).cuda()
 repre_table = torch.arange(0, s, dtype = torch.int32).cuda()
 q_table = torch.arange(0, s, dtype = torch.int32).cuda()
@@ -74,8 +62,8 @@ print("index_sorted: ", index_sorted)
 diff = (score - score_gt).abs()
 print("diff: ", diff.mean(), diff.max())
 
-total_seq_len = 10000
-batch_size = 4
+batch_size = 10
+total_seq_len = 3200 // 128 * batch_size
 topk = 10
 num_layers = 61
 warmup_iters = 10
@@ -145,13 +133,13 @@ print("diff: ", diff.max())
 
 
 # extract repre
-dtype = torch.bfloat16
-key_cache = torch.randn(100, 128, 8, 128, dtype=dtype).cuda()
-repre_cache = torch.randn(100, 1, 8, 128, dtype=dtype).cuda()
-repre_cache2 = torch.randn(100, 1, 8, 128, dtype=dtype).cuda()
-block_table = torch.arange(0, 20, 2, dtype=torch.int32).cuda()
+dtype = torch.float16
+key_cache = torch.randn(1000, 128, 8, 128, dtype=dtype).cuda()
+repre_cache = torch.randn(1000, 1, 8, 128, dtype=dtype).cuda()
+repre_cache2 = torch.randn(1000, 1, 8, 128, dtype=dtype).cuda()
+block_table = torch.arange(100, dtype=torch.int32).cuda()
 begin = time.time()
-esa_repre(key_cache.view(100, 128, -1), repre_cache.view(100, 1, -1), block_table, block_table)
+esa_repre(key_cache.view(1000, 128, -1), repre_cache.view(1000, 1, -1), block_table, block_table)
 torch.cuda.synchronize()
 print("esa_repre spent: ", time.time() - begin)
 
