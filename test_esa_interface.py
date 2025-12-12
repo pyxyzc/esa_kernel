@@ -37,8 +37,8 @@ workspace = torch.zeros(10000, dtype=torch.int32).cuda()
 
 start = time.time()
 
-Input = lib.RetrievalInputTensor
-Output = lib.RetrievalOutputTensor
+Input = lib.RetrievalInputTensor()
+Output = lib.RetrievalOutputTensor()
 
 Input.query_list = query_list
 Input.repre_cache = repre_cache
