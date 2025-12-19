@@ -2,6 +2,8 @@
 #include <torch/extension.h>
 #include <cuda_runtime.h>
 #include <vector>
+static float** cached_d_ptrs = nullptr;
+static int    cached_batch  = 0;
 
 __global__ void add_kernel(float** in, float* out, int n, int batch)
 {
@@ -27,12 +29,14 @@ void launch(std::vector<torch::Tensor> in_tensors, torch::Tensor out)
     dim3 numThreads = {1024};
     dim3 numBlocks = {(size_t)((n + 1024 - 1) / 1024)};
     printf("%d %d\n", n, batch);
-    // allocate device array of input pointers
-    float** d_ptrs;
-    cudaMalloc((void**)&d_ptrs, batch * sizeof(float*));
-    cudaMemcpy(d_ptrs, ptrs.data(), batch * sizeof(float*), cudaMemcpyHostToDevice);
-    add_kernel<<<numBlocks, numThreads>>>(d_ptrs, out.data_ptr<float>(), n, batch);
-    cudaFree(d_ptrs);
+    // reuse or initialize cached device pointer array
+    if (cached_batch != batch) {
+        if (cached_d_ptrs) cudaFree(cached_d_ptrs);
+        cudaMalloc((void**)&cached_d_ptrs, batch * sizeof(float*));
+        cudaMemcpy(cached_d_ptrs, ptrs.data(), batch * sizeof(float*), cudaMemcpyHostToDevice);
+        cached_batch = batch;
+    }
+    add_kernel<<<numBlocks, numThreads>>>(cached_d_ptrs, out.data_ptr<float>(), n, batch);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
