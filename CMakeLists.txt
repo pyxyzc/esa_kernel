@@ -5,6 +5,7 @@ project(esa LANGUAGES CXX CUDA)
 find_package(Python COMPONENTS Interpreter Development REQUIRED)
 list(APPEND CMAKE_PREFIX_PATH ${Python_SITELIB}/pybind11)
 find_package(pybind11 REQUIRED)
+find_package(Torch REQUIRED)   # provides Torch::torch
 
 if(DEFINED ENV{MY_INCLUDE_PATH})
     message(STATUS "Adding include path from MY_INCLUDE_PATH: $ENV{MY_INCLUDE_PATH}")
@@ -33,4 +34,6 @@ set_target_properties(esa PROPERTIES
 target_include_directories(esa PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # ---------- 5.  link libraries -----------------------------
-target_link_libraries(esa PRIVATE ${CUDA_LIBRARIES})   # libcudart
+target_link_libraries(esa PRIVATE ${TORCH_LIBRARIES} ${CUDA_LIBRARIES})
+target_compile_definitions(esa PRIVATE ${TORCH_COMPILE_DEFINITIONS})
+target_include_directories(esa PRIVATE ${TORCH_INCLUDE_DIRS})
