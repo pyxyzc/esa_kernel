@@ -1,3 +1,4 @@
+#include <torch/extension.h>
 #include "esa_kernels.h"
 #include "cuda_sm_copy.h"
 
