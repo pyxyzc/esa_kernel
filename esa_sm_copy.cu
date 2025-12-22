@@ -1,4 +1,15 @@
-#include "cuda_sm_copy.h"
+#include <stdio.h>
+#include <cuda_runtime.h>
+#include <cuda_bf16.h>
+#include <cuda_fp16.h>
+#include <torch/extension.h>
+
+#define CUDA_TRANS_UNIT_SIZE (sizeof(uint4) * 2)
+
+constexpr __host__ __device__
+int ceildiv(int a, int b) {
+    return (a + b - 1) / b;
+}
 
 inline __device__ void CudaCopyUnit(const uint8_t* __restrict__ src,
                                     volatile uint8_t* __restrict__ dst)
@@ -28,7 +39,7 @@ __global__ void CudaCopyKernel(const void** src, void** dst, size_t size, size_t
         auto host = ((const uint8_t*)src[idx]) + off;
         auto device = ((uint8_t*)dst[idx]) + off;
         CudaCopyUnit(host, device);
-        offset += CUDA_TRANS_THREAD_NUMBER * CUDA_TRANS_UNIT_SIZE;
+        offset += gridDim.x * blockDim.x * CUDA_TRANS_UNIT_SIZE;
     }
 }
 
@@ -42,7 +53,7 @@ __global__ void CudaCopyKernel(const void** src, void* dst, size_t size, size_t 
         auto host = ((const uint8_t*)src[idx]) + off;
         auto device = ((uint8_t*)dst) + offset;
         CudaCopyUnit(host, device);
-        offset += CUDA_TRANS_THREAD_NUMBER * CUDA_TRANS_UNIT_SIZE;
+        offset += gridDim.x * blockDim.x * CUDA_TRANS_UNIT_SIZE;
     }
 }
 
@@ -56,7 +67,7 @@ __global__ void CudaCopyKernel(const void* src, void** dst, size_t size, size_t 
         auto host = ((const uint8_t*)src) + offset;
         auto device = ((uint8_t*)dst[idx]) + off;
         CudaCopyUnit(host, device);
-        offset += CUDA_TRANS_THREAD_NUMBER * CUDA_TRANS_UNIT_SIZE;
+        offset += gridDim.x * blockDim.x * CUDA_TRANS_UNIT_SIZE;
     }
 }
 
@@ -73,8 +84,11 @@ __global__ void CudaCopyKernel(const void* src, void* dst, size_t size)
 }
 
 
-void esa_copy(torch::Tensor src, torch::Tensor dst, size_t size)
+extern "C" void esa_copy(torch::Tensor src, torch::Tensor dst, size_t size)
 {
-    CudaCopyKernel<<<CUDA_TRANS_BLOCK_NUMBER, CUDA_TRANS_BLOCK_SIZE>>>(
+    dim3 numThreads = {1024};
+    int totalThreads = ceildiv(size, CUDA_TRANS_UNIT_SIZE);
+    dim3 numBlocks = {static_cast<unsigned int>(ceildiv(totalThreads, numThreads.x))};
+    CudaCopyKernel<<<numBlocks, numThreads>>>(
         (const void*)src.data_ptr(), (void*)dst.data_ptr(), size);
 }

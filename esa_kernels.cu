@@ -187,42 +187,42 @@ __global__ void retrieval_kernel_bf16(__nv_bfloat16 *__restrict__ queries, __nv_
 }
 
 
-// extern "C" void esa_repre(torch::Tensor key_cache, torch::Tensor repre_cache, torch::Tensor block_table, torch::Tensor repre_table){
-//     int block_size = key_cache.size(1);
-//     int dim = repre_cache.size(-1);
-//     int threads = dim;
-//     int blocks = block_table.size(0);
-//     AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16, key_cache.scalar_type(), "esa_repre_cuda", ([&] {
-//                 extract_repre<scalar_t><<<blocks, threads>>>(
-//                         key_cache.data_ptr<scalar_t>(),
-//                         repre_cache.data_ptr<scalar_t>(),
-//                         block_table.data_ptr<int>(),
-//                         repre_table.data_ptr<int>(),
-//                         block_size,
-//                         dim);
-//                 }));
-// }
+extern "C" void esa_repre(torch::Tensor key_cache, torch::Tensor repre_cache, torch::Tensor block_table, torch::Tensor repre_table){
+    int block_size = key_cache.size(1);
+    int dim = repre_cache.size(-1);
+    int threads = dim;
+    int blocks = block_table.size(0);
+    AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16, key_cache.scalar_type(), "esa_repre_cuda", ([&] {
+                extract_repre<scalar_t><<<blocks, threads>>>(
+                        key_cache.data_ptr<scalar_t>(),
+                        repre_cache.data_ptr<scalar_t>(),
+                        block_table.data_ptr<int>(),
+                        repre_table.data_ptr<int>(),
+                        block_size,
+                        dim);
+                }));
+}
 
-// extern "C" void esa_topk(torch::Tensor score, torch::Tensor index, torch::Tensor offsets, torch::Tensor score_out, torch::Tensor index_out, torch::Tensor workspace){
-//     void* temp_workspace = nullptr;
-//     size_t temp_bytes = 0;
-//     size_t B = offsets.size(0) - 1;
-//     size_t total = score.size(0);
-//     cub::DeviceSegmentedRadixSort::SortPairsDescending(
-//             temp_workspace, temp_bytes,
-//             score.data_ptr<float>(),  score_out.data_ptr<float>(),
-//             index.data_ptr<int>(), index_out.data_ptr<int>(),
-//             total, B, offsets.data_ptr<int>(), offsets.data_ptr<int>() + 1);
-//     // NOTE: Don't use malloc, just reuse the workspace, but the first call of
-//     // SortPairsDescending is necesssary to determine the workspace size.
-//     // CUDA_CHECK(cudaMalloc(&temp_workspace, temp_bytes));
-//     temp_workspace = workspace.data_ptr<int>();
-//     cub::DeviceSegmentedRadixSort::SortPairsDescending(
-//             temp_workspace, temp_bytes,
-//             score.data_ptr<float>(),  score_out.data_ptr<float>(),
-//             index.data_ptr<int>(), index_out.data_ptr<int>(),
-//             total, B, offsets.data_ptr<int>(), offsets.data_ptr<int>() + 1);
-// }
+extern "C" void esa_topk(torch::Tensor score, torch::Tensor index, torch::Tensor offsets, torch::Tensor score_out, torch::Tensor index_out, torch::Tensor workspace){
+    void* temp_workspace = nullptr;
+    size_t temp_bytes = 0;
+    size_t B = offsets.size(0) - 1;
+    size_t total = score.size(0);
+    cub::DeviceSegmentedRadixSort::SortPairsDescending(
+            temp_workspace, temp_bytes,
+            score.data_ptr<float>(),  score_out.data_ptr<float>(),
+            index.data_ptr<int>(), index_out.data_ptr<int>(),
+            total, B, offsets.data_ptr<int>(), offsets.data_ptr<int>() + 1);
+    // NOTE: Don't use malloc, just reuse the workspace, but the first call of
+    // SortPairsDescending is necesssary to determine the workspace size.
+    // CUDA_CHECK(cudaMalloc(&temp_workspace, temp_bytes));
+    temp_workspace = workspace.data_ptr<int>();
+    cub::DeviceSegmentedRadixSort::SortPairsDescending(
+            temp_workspace, temp_bytes,
+            score.data_ptr<float>(),  score_out.data_ptr<float>(),
+            index.data_ptr<int>(), index_out.data_ptr<int>(),
+            total, B, offsets.data_ptr<int>(), offsets.data_ptr<int>() + 1);
+}
 
 
 extern "C" void esa_retrieval_launcher(torch::Tensor q_ptrs, torch::Tensor repre_cache, torch::Tensor q_index, torch::Tensor repre_index, torch::Tensor batch_offset, torch::Tensor workspace, torch::Tensor score, torch::Tensor score_sorted, torch::Tensor index_ranged, torch::Tensor index_sorted, int num_q_heads, int batch_size){
@@ -230,7 +230,6 @@ extern "C" void esa_retrieval_launcher(torch::Tensor q_ptrs, torch::Tensor repre
     auto num_k_heads = repre_cache.size(1);
     int dim = repre_cache.size(2);
     int batch = batch_size;
-    printf("blocks: %d, num_k_heads: %d, num_q_heads: %d, batch: %d, dim: %d\n", s, num_k_heads, num_q_heads, batch, dim);
 
     dim3 numBlocks = {(unsigned int)(s)};
     dim3 numThreads = {32, 32};

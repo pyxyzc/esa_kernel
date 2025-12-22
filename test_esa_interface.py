@@ -41,12 +41,14 @@ def build_shared():
         "-shared",
         "esa_kernels.cu",
         "esa_interface.cc",
+        "esa_sm_copy.cu",
         # includes
         "-I" + py_inc,
         "-I" + cuda_inc,
         *[f"-I{p}" for p in t_inc],
         # ABI macro
         abi_macro,
+        "-DTORCH_EXTENSION_NAME=esa_interface",
         # libs
         "-L" + cuda_lib,
         *[f"-L{p}" for p in t_lib],
@@ -84,7 +86,7 @@ def load_module():
             # torch ships pybind11 headers and handles the build toolchain
             mod = torch_load(
                 name="interface",
-                sources=["esa_interface.cc", "esa_kernels.cu"],
+                sources=["esa_interface.cc", "esa_kernels.cu", "esa_sm_copy.cu"],
                 extra_cflags=["-O3", "-std=c++17"],
                 extra_cuda_cflags=["-O3"],
                 verbose=True,
@@ -112,10 +114,9 @@ def load_module():
 
 esa_lib = load_module()
 esa_retrieval = esa_lib.esa_retrieval
-# esa_topk = esa_lib.esa_topk
-# esa_repre = esa_lib.esa_repre
-# esa_copy = esa_lib.esa_copy
-
+esa_topk = esa_lib.esa_topk
+esa_repre = esa_lib.esa_repre
+esa_copy = esa_lib.esa_copy
 class style():
     RED = '\033[31m'
     GREEN = '\033[32m'
@@ -141,12 +142,13 @@ def print_yellow(msg):
 def test_esa_retrieval(batch_size, num_repre_blocks, num_q_heads):
     dim = 128
     print(f'''TEST esa_retrieval
-{' '*4}total number of queries (a.k.a batch_size): {batch_size}
+{' '*4}number of queries (a.k.a batch_size): {batch_size}
+{' '*4}number of blocks per query: {num_repre_blocks}
 {' '*4}heads: {num_q_heads}\n''')
     total_blocks = num_repre_blocks * batch_size
     N = total_blocks * 2
     num_k_heads = 8
-    dtype = torch.float32
+    dtype = torch.bfloat16
     query = torch.randn(batch_size, num_q_heads, dim, dtype=dtype).cuda()
     repre_cache = torch.randn(N, num_k_heads, dim, dtype = dtype).cuda()
     rng = np.random.default_rng()
@@ -168,8 +170,7 @@ def test_esa_retrieval(batch_size, num_repre_blocks, num_q_heads):
     #                          dtype=torch.int64, pin_memory=True)
     # ptrs_dev = torch.zeros(batch_size, dtype=torch.int64, device="cuda")
     # size = ptrs_host.numel() * ptrs_host.element_size()
-    # esa_copy(ptrs_host, ptrs_dev, size)
-    # print("ptrs: ", ptrs_dev, ptrs_host)
+    # esa_copy(ptrs_host, ptrs_dev, size) # then we use ptrs_dev as the input of esa_retrieval
 
     Input = esa_lib.RetrievalInputTensor()
     Input.num_q_heads = num_q_heads;
@@ -189,12 +190,10 @@ def test_esa_retrieval(batch_size, num_repre_blocks, num_q_heads):
     Output.index_sorted = index_sorted
 
     start = time.perf_counter_ns()
-    print_red(f"{' '*4}batch_offset {Input.batch_offset}")
     esa_retrieval(Input, Output)
     torch.cuda.synchronize()
     duration = time.perf_counter_ns() - start
     print_green(f"{' '*4}esa_retrieval host API time: {duration/1e6:.3f} ms")
-    print_red(f"{' '*4}batch_offset {batch_offset}")
 
     def naive_retrieval():
         query_batched = query[q_index].to(torch.float32)
@@ -212,76 +211,98 @@ def test_esa_retrieval(batch_size, num_repre_blocks, num_q_heads):
     print_red(f"{' '*4}naive_retrieval host API time: {duration/1e6:.3f} ms")
 
     diff = (score - score_gt).abs()
-    # print_blue(f"{' '*4}score diff: {diff.mean():.3f}(mean), {diff.max():.3f}(max)")
-    print(f"score: {score}")
-    print(f"score_gt: {score_gt}")
-    print(f"score diff: {diff.mean()}, {diff.max()}")
-    diff_index = (index_sorted - index_gt).abs()
-    print(f"index: {index_sorted}")
-    print(f"index_gt: {index_gt}")
-    print_blue(f"{' '*4}index diff: {diff_index}")
+    print_blue(f"{' '*4}score diff: {diff.mean():.3f}(mean), {diff.max():.3f}(max)")
+    diff_index = (index_sorted - index_gt).abs().to(torch.float32)
+    print_blue(f"{' '*4}index diff: {diff_index.mean():.0f}(mean), {diff_index.max():.0f}(max)")
     print("")
 
 
-# @pytest.mark.parametrize("num_repre_blocks", [100, 500, 1000])
-# @pytest.mark.parametrize("dim", [576, 1024])
-# def test_esa_repre(num_repre_blocks, dim):# extract repre
-#     print(f'''TEST esa_repre
-# {' '*4}total number of blocks to extract_repre: {num_repre_blocks}
-# {' '*4}dim (num_heads * hidden_size): {dim}\n''')
-#     dtype = torch.bfloat16
-#     N = 2 * num_repre_blocks
-#     block_size = 128
-#     key_cache = torch.randn(N, block_size, dim, dtype=dtype).cuda()
-#     repre_cache = torch.randn(N, 1, dim, dtype=dtype).cuda()
-#     repre_cache2 = torch.randn(N, 1, dim, dtype=dtype).cuda()
-#
-#     rng = np.random.default_rng()
-#     range_n = np.arange(N)
-#     repre_index = rng.choice(range_n, size=num_repre_blocks, replace=False)
-#     repre_index = torch.from_numpy(repre_index).to(torch.int32).cuda()
-#
-#     start = time.perf_counter_ns()
-#     esa_repre(key_cache, repre_cache, repre_index, repre_index)
-#     torch.cuda.synchronize()
-#     duration = time.perf_counter_ns() - start
-#     print_green(f"{' '*4}[esa_repre] host API time: {duration / 1e6:.3f} ms")
-#
-#     start = time.perf_counter_ns()
-#     for blk_id in repre_index:
-#         repre_cache2[blk_id] = key_cache[blk_id].mean(0)
-#     torch.cuda.synchronize()
-#     duration = time.perf_counter_ns() - start
-#     print_red(f"{' '*4}[naive_repre] host API time: {duration / 1e6:.3f} ms")
-#
-#     diff = (repre_cache2[repre_index] - repre_cache[repre_index]).abs()
-#     print_blue(f"{' '*4}[esa_repre] repre diff: {diff.mean():.3f}(mean), {diff.max():.3f}(max)")
-#     print("")
+@pytest.mark.parametrize("num_repre_blocks", [100, 500, 1000])
+@pytest.mark.parametrize("dim", [576, 1024])
+def test_esa_repre(num_repre_blocks, dim):# extract repre
+    print(f'''TEST esa_repre
+{' '*4}total number of blocks to extract_repre: {num_repre_blocks}
+{' '*4}dim (num_heads * hidden_size): {dim}\n''')
+    dtype = torch.bfloat16
+    N = 2 * num_repre_blocks
+    block_size = 128
+    key_cache = torch.randn(N, block_size, dim, dtype=dtype).cuda()
+    repre_cache = torch.randn(N, 1, dim, dtype=dtype).cuda()
+    repre_cache2 = torch.randn(N, 1, dim, dtype=dtype).cuda()
+
+    rng = np.random.default_rng()
+    range_n = np.arange(N)
+    repre_index = rng.choice(range_n, size=num_repre_blocks, replace=False)
+    repre_index = torch.from_numpy(repre_index).to(torch.int32).cuda()
+
+    start = time.perf_counter_ns()
+    esa_repre(key_cache, repre_cache, repre_index, repre_index)
+    torch.cuda.synchronize()
+    duration = time.perf_counter_ns() - start
+    print_green(f"{' '*4}[esa_repre] host API time: {duration / 1e6:.3f} ms")
+
+    start = time.perf_counter_ns()
+    for blk_id in repre_index:
+        repre_cache2[blk_id] = key_cache[blk_id].mean(0)
+    torch.cuda.synchronize()
+    duration = time.perf_counter_ns() - start
+    print_red(f"{' '*4}[naive_repre] host API time: {duration / 1e6:.3f} ms")
+
+    diff = (repre_cache2[repre_index] - repre_cache[repre_index]).abs()
+    print_blue(f"{' '*4}[esa_repre] repre diff: {diff.mean():.3f}(mean), {diff.max():.3f}(max)")
+    print("")
 
 
-if __name__ == "__main__":
-    test_esa_retrieval(1, 52, 40)
-    # a = torch.randn(1000, 1000, dtype=torch.float32, device="cuda")
-    # b = torch.randn(1000, 1000, dtype=torch.float32, device="cuda")
-    # c = torch.randn(1000, 1000, dtype=torch.float32, device="cuda")
-    # host = torch.randn(100, 128, 128, pin_memory=True, device="cpu", dtype=torch.float32)
-    # dev = torch.zeros(100, 128, 128, device="cuda", dtype=torch.float32)
-    # size = host.numel() * host.element_size()
-    # ptr1 = torch.tensor([host.data_ptr() for _ in range(4)], device="cpu",
-    #                     dtype=torch.uint64, pin_memory=True)
-    # ptr2 = torch.zeros(4, device="cuda", dtype=torch.uint64)
-    # size1 = ptr1.numel() * ptr1.element_size()
-    # size2 = ptr2.numel() * ptr2.element_size()
-    # print("sizes: ", size1, size2)
-    # esa_copy(ptr1, ptr2, size1)
-    # print("ptr1: ",ptr1)
-    # print("ptr2: ",ptr2)
+def test_esa_copy():# extract repre
+    print(f'''TEST esa_copy''')
+    host = torch.randn(100, 128, 128, pin_memory=True, device="cpu", dtype=torch.float32)
+    dev = torch.zeros(100, 128, 128, device="cuda", dtype=torch.float32)
+    dev2 = torch.zeros(100, 128, 128, device="cuda", dtype=torch.float32)
+    size = host.numel() * host.element_size()
 
-    # for i in range(10):
-    #     esa_copy(host, dev, size)
-    #     c = torch.matmul(a, b)
-    # with torch.cuda.nvtx.range(f"beginGGG"):
-    #     for i in range(100):
-    #         esa_copy(host, dev, size)
-    #         c = torch.matmul(a, b)
-    #     torch.cuda.synchronize()
+    start = time.perf_counter_ns()
+    esa_copy(host, dev, size)
+    torch.cuda.synchronize()
+    duration = time.perf_counter_ns() - start
+    print_green(f"{' '*4}[esa_copy] host API time: {duration / 1e6:.3f} ms")
+
+
+    start = time.perf_counter_ns()
+    dev2.copy_(host)
+    torch.cuda.synchronize()
+    duration = time.perf_counter_ns() - start
+    print_red(f"{' '*4}[naive_copy] host API time: {duration / 1e6:.3f} ms")
+
+    diff = (dev - host.cuda()).abs()
+    diff2 = (dev2 - host.cuda()).abs()
+    print_blue(f"{' '*4}[esa_copy] diff: {diff.mean():.3f}(mean), {diff.max():.3f}(max), {diff2.mean():.3f}(mean), {diff2.max():.3f}(max)")
+    print("")
+    assert diff.max() < 1e-5
+
+
+# if __name__ == "__main__":
+#     a = torch.randn(1000, 1000, dtype=torch.float32, device="cuda")
+#     b = torch.randn(1000, 1000, dtype=torch.float32, device="cuda")
+#     c = torch.randn(1000, 1000, dtype=torch.float32, device="cuda")
+#     host = torch.randn(100, 128, 128, pin_memory=True, device="cpu", dtype=torch.float32)
+#     dev = torch.zeros(100, 128, 128, device="cuda", dtype=torch.float32)
+#     size = host.numel() * host.element_size()
+#     ptr1 = torch.tensor([host.data_ptr() for _ in range(4)], device="cpu",
+#                         dtype=torch.uint64, pin_memory=True)
+#     ptr2 = torch.zeros(4, device="cuda", dtype=torch.uint64)
+#     size1 = ptr1.numel() * ptr1.element_size()
+#     size2 = ptr2.numel() * ptr2.element_size()
+#     print("sizes: ", size1, size2)
+#     esa_copy(ptr1, ptr2, size1)
+#     print("ptr1: ",ptr1)
+#     print("ptr2: ",ptr2)
+#
+#     # NOTE:Profile: mixed sm_copy kernel and heavy compute kernel
+#     # for i in range(10):
+#     #     esa_copy(host, dev, size)
+#     #     c = torch.matmul(a, b)
+#     # with torch.cuda.nvtx.range(f"beginGGG"):
+#     #     for i in range(100):
+#     #         esa_copy(host, dev, size)
+#     #         c = torch.matmul(a, b)
+#     #     torch.cuda.synchronize()

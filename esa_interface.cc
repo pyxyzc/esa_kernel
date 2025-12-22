@@ -8,8 +8,13 @@
 
 namespace py = pybind11;
 
-extern "C" void esa_retrieval_launcher(torch::Tensor q_ptrs, torch::Tensor repre_cache, torch::Tensor q_index, torch::Tensor repre_index,
-        torch::Tensor batch_offset, torch::Tensor workspace, torch::Tensor score, torch::Tensor score_sorted, torch::Tensor index_ranged, torch::Tensor index_sorted, int num_q_heads, int batch_size);
+extern "C" void esa_retrieval_launcher(torch::Tensor q_ptrs, torch::Tensor repre_cache, torch::Tensor q_index, torch::Tensor repre_index, torch::Tensor batch_offset, torch::Tensor workspace, torch::Tensor score, torch::Tensor score_sorted, torch::Tensor index_ranged, torch::Tensor index_sorted, int num_q_heads, int batch_size);
+
+extern "C" void esa_topk(torch::Tensor score, torch::Tensor index, torch::Tensor offsets, torch::Tensor score_out, torch::Tensor index_out, torch::Tensor workspace);
+
+extern "C" void esa_repre(torch::Tensor key_cache, torch::Tensor repre_cache, torch::Tensor block_table, torch::Tensor repre_table);
+
+extern "C" void esa_copy(torch::Tensor src, torch::Tensor dst, size_t size);
 
 struct RetrievalInputTensor{
     torch::Tensor q_ptrs;
@@ -51,7 +56,7 @@ void esa_retrieval(RetrievalInputTensor input, RetrievalOutputTensor output){
 #define TORCH_BINDING_COMMON_EXTENSION(func) \
     m.def(STRINGFY(func), &func, STRINGFY(func))
 
-PYBIND11_MODULE(esa_interface, m) {
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ESA cuda kernels for block feature extraction and block retrieval";
     py::class_<RetrievalInputTensor>(m, "RetrievalInputTensor")
         .def(py::init<>())
@@ -72,4 +77,7 @@ PYBIND11_MODULE(esa_interface, m) {
         .def_readwrite("index_sorted", &RetrievalOutputTensor::index_sorted);
 
     TORCH_BINDING_COMMON_EXTENSION(esa_retrieval);
+    TORCH_BINDING_COMMON_EXTENSION(esa_topk);
+    TORCH_BINDING_COMMON_EXTENSION(esa_repre);
+    TORCH_BINDING_COMMON_EXTENSION(esa_copy);
 }
