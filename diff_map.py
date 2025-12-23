@@ -93,3 +93,28 @@ for _ in range(100):
 torch.cuda.synchronize()
 times = times[10:]
 print(times)
+
+from torch.utils.cpp_extension import load as _load_ext
+
+_diff_map_ext = None
+def diff_two_map_cuda(keys, old_values, new_values, eps=1e-6):
+    global _diff_map_ext
+    if _diff_map_ext is None:
+        _diff_map_ext = _load_ext(
+            name="diff_map_ext",
+            sources=["diff_map_extension.cu"],
+            extra_cflags=["-O3", "-std=c++17"],
+            extra_cuda_cflags=["-O3", "-std=c++17"],
+            verbose=False
+        )
+    return _diff_map_ext.diff_two_map(keys, old_values, new_values, float(eps))
+
+times = []
+for _ in range(100):
+    begin = time.perf_counter_ns()
+    rk, rnv = diff_two_map_cuda(keys, old_values, new_values, 0.0)
+    torch.cuda.synchronize()
+    dura = time.perf_counter_ns() - begin
+    times.append(dura)
+times = times[10:]
+print(f'time: {sum(times)/len(times) / 1e6}ms, remain_keys={rk.numel()}, remain_new_values={rnv.numel()}')
