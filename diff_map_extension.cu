@@ -8,6 +8,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/binary_search.h>
 #include <thrust/sort.h>
+#include <thrust/iterator/counting_iterator.h>
 #include <type_traits>
 #include <math.h>
 
@@ -368,8 +369,103 @@ std::tuple<at::Tensor, at::Tensor> diff_two_map_cuda(
     return {remain_keys, remain_new_values};
 }
 
+// Row indices with any non-zero in the row (CUDA)
+
+template <typename T>
+__device__ __forceinline__ bool is_nz(T v, double /*eps*/) {
+    return v != static_cast<T>(0);
+}
+template <>
+__device__ __forceinline__ bool is_nz<float>(float v, double eps) {
+    return fabsf(v) > static_cast<float>(eps);
+}
+template <>
+__device__ __forceinline__ bool is_nz<double>(double v, double eps) {
+    return fabs(v) > eps;
+}
+
+template <typename T>
+__global__ void row_has_nonzero_kernel(const T* __restrict__ a,
+                                       int64_t N, int64_t M, double eps,
+                                       uint8_t* __restrict__ flags)
+{
+    int row = blockIdx.x;
+    if (row >= N) return;
+
+    __shared__ int any;
+    if (threadIdx.x == 0) any = 0;
+    __syncthreads();
+
+    const T* row_ptr = a + static_cast<size_t>(row) * static_cast<size_t>(M);
+
+    for (int64_t j = threadIdx.x; j < M; j += blockDim.x) {
+        T v = row_ptr[j];
+        if (is_nz<T>(v, eps)) {
+            atomicExch(&any, 1);
+            break;
+        }
+        if (any) break;
+    }
+    __syncthreads();
+    if (threadIdx.x == 0) flags[row] = static_cast<uint8_t>(any);
+}
+
+at::Tensor row_indices_with_nonzero(at::Tensor matrix, double eps=0.0) {
+    TORCH_CHECK(matrix.is_cuda(), "matrix must be a CUDA tensor");
+    TORCH_CHECK(matrix.dim() == 2, "matrix must be 2D");
+    matrix = matrix.contiguous();
+
+    const int64_t N = matrix.size(0);
+    const int64_t M = matrix.size(1);
+
+    auto flags = at::empty({N}, matrix.options().dtype(at::kByte));
+    auto stream = at::cuda::getCurrentCUDAStream();
+    const int threads = 256;
+    dim3 blocks(static_cast<unsigned int>(N));
+
+    switch (matrix.scalar_type()) {
+        case at::kFloat:
+            row_has_nonzero_kernel<float><<<blocks, threads, 0, stream>>>(
+                matrix.data_ptr<float>(), N, M, eps, flags.data_ptr<uint8_t>());
+            break;
+        case at::kDouble:
+            row_has_nonzero_kernel<double><<<blocks, threads, 0, stream>>>(
+                matrix.data_ptr<double>(), N, M, eps, flags.data_ptr<uint8_t>());
+            break;
+        case at::kInt:
+            row_has_nonzero_kernel<int32_t><<<blocks, threads, 0, stream>>>(
+                matrix.data_ptr<int32_t>(), N, M, 0.0, flags.data_ptr<uint8_t>());
+            break;
+        case at::kLong:
+            row_has_nonzero_kernel<int64_t><<<blocks, threads, 0, stream>>>(
+                matrix.data_ptr<int64_t>(), N, M, 0.0, flags.data_ptr<uint8_t>());
+            break;
+        default:
+            TORCH_CHECK(false, "row_indices_with_nonzero: unsupported dtype: ", matrix.scalar_type());
+    }
+
+    auto out_idx = at::empty({N}, matrix.options().dtype(at::kLong));
+    auto policy = thrust::cuda::par.on(stream);
+
+    auto begin = thrust::make_counting_iterator<int64_t>(0);
+    auto end   = thrust::make_counting_iterator<int64_t>(N);
+
+    auto stencil_begin = thrust::device_pointer_cast(flags.data_ptr<uint8_t>());
+    auto out_begin = thrust::device_pointer_cast(out_idx.data_ptr<int64_t>());
+
+    auto new_end = thrust::copy_if(
+        policy, begin, end, stencil_begin, out_begin,
+        [] __device__ (uint8_t f) { return f != 0; });
+
+    int64_t K = new_end - out_begin;
+    return out_idx.narrow(0, 0, K);
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("diff_two_map", &diff_two_map_cuda,
           "Find non-overlapped keys (from old_values) and non-overlapped new_values (CUDA)",
           py::arg("keys"), py::arg("old_values"), py::arg("new_values"), py::arg("eps") = 1e-6);
+    m.def("row_indices_with_nonzero", &row_indices_with_nonzero,
+          "Return row indices that contain at least one non-zero (CUDA)",
+          py::arg("matrix"), py::arg("eps") = 0.0);
 }
