@@ -325,12 +325,19 @@ extern "C" void esa_topk(torch::Tensor score, torch::Tensor index, torch::Tensor
 }
 
 
-extern "C" void esa_retrieval_launcher(torch::Tensor query, torch::Tensor repre_cache, torch::Tensor q_index, torch::Tensor repre_index, torch::Tensor batch_offset, torch::Tensor workspace, torch::Tensor score, torch::Tensor score_sorted, torch::Tensor index, torch::Tensor index_sorted){
-    int s = repre_index.size(0);
+extern "C" void esa_retrieval_launcher(torch::Tensor query, torch::Tensor repre_cache, torch::Tensor q_index, torch::Tensor repre_index, torch::Tensor batch_offset, torch::Tensor workspace, torch::Tensor score, torch::Tensor score_sorted, torch::Tensor index, torch::Tensor index_sorted, int batch, int s){
+    TORCH_CHECK(query.dim() == 3, "query dim must be 3");
+    TORCH_CHECK(repre_cache.dim() == 3, "repre_cache dim must be 3");
+    TORCH_CHECK(q_index.size(0) == repre_index.size(0), "q_index shape should be same with repre_index");
+    TORCH_CHECK(q_index.dtype() == at::kInt, "q_index must be int32 (torch.long)");
+    TORCH_CHECK(repre_index.dtype() == at::kInt, "repre_index must be int32 (torch.long)");
+    TORCH_CHECK(batch_offset.dtype() == at::kInt, "batch_offset must be int32 (torch.long)");
+    TORCH_CHECK(index.dtype() == at::kInt, "index must be int32 (torch.long)");
+    TORCH_CHECK(index_sorted.dtype() == at::kInt, "index_sorted must be int32 (torch.long)");
+
     int num_k_heads = repre_cache.size(1);
     int num_q_heads = query.size(1);
     int dim = repre_cache.size(2);
-    int batch = batch_offset.size(0) - 1;
 
     dim3 numBlocks = {(unsigned int)(s)};
     dim3 numThreads = {32, 32};

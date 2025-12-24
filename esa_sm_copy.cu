@@ -94,6 +94,17 @@ extern "C" void esa_copy(torch::Tensor src, torch::Tensor dst, size_t size)
         (const void*)src.data_ptr(), (void*)dst.data_ptr(), size);
 }
 
+
+extern "C" void esa_copy_batch(torch::Tensor src_ptrs, torch::Tensor dst_ptrs, int size)
+{
+    dim3 numThreads = {1024};
+    int num = src_ptrs.size(0);
+    int totalThreads = ceildiv(size, CUDA_TRANS_UNIT_SIZE);
+    dim3 numBlocks = {static_cast<unsigned int>(ceildiv(totalThreads, numThreads.x))};
+    CudaCopyKernel<<<numBlocks, numThreads>>>(
+        (const void**)src_ptrs.data_ptr(), (void**)dst_ptrs.data_ptr(), size, num);
+}
+
 // Scatter-copy rows from pinned host src to device dst using index tables.
 // dst[block_table_dst[i]] = src[block_table_src[i]] for i in [0, K)
 template <typename index_t>
@@ -138,11 +149,7 @@ extern "C" void esa_scatter_copy(torch::Tensor src,
                                  torch::Tensor block_table_src,
                                  torch::Tensor block_table_dst)
 {
-    TORCH_CHECK(!src.is_cuda(), "esa_scatter_copy: src must be a CPU tensor");
-    TORCH_CHECK(src.is_pinned(), "esa_scatter_copy: src must be pinned (page-locked) memory");
-    TORCH_CHECK(dst.is_cuda(), "esa_scatter_copy: dst must be a CUDA tensor");
     TORCH_CHECK(src.dim() == 2 && dst.dim() == 2, "esa_scatter_copy: src and dst must be 2D [N, dim] and [M, dim]");
-    TORCH_CHECK(src.size(1) == dst.size(1), "esa_scatter_copy: src and dst must have the same dim");
     TORCH_CHECK(src.is_contiguous() && dst.is_contiguous(), "esa_scatter_copy: src and dst must be contiguous");
 
     TORCH_CHECK(block_table_src.device().is_cuda() && block_table_dst.device().is_cuda(),

@@ -118,6 +118,8 @@ esa_retrieval = esa_lib.esa_retrieval
 esa_topk = esa_lib.esa_topk
 esa_repre = esa_lib.esa_repre
 esa_copy = esa_lib.esa_copy
+esa_copy_batch = esa_lib.esa_copy_batch
+esa_scatter_copy = esa_lib.esa_scatter_copy
 class style():
     RED = '\033[31m'
     GREEN = '\033[32m'
@@ -181,6 +183,8 @@ def test_esa_retrieval(batch_size, num_repre_blocks, num_q_heads):
     Input.repre_index = repre_index
     Input.batch_offset = batch_offset
     Input.workspace = workspace
+    Input.batch = batch_size
+    Input.s = total_blocks
 
     Output = esa_lib.RetrievalOutputTensor()
     Output.score = score
@@ -283,32 +287,54 @@ def test_esa_copy():# extract repre
     print("")
     assert diff.max() < 1e-5
 
+def test_esa_scatter_copy():# extract repre
+    print(f'''TEST esa_copy''')
+    host = torch.randn(100, 128 * 128, pin_memory=True, device="cpu", dtype=torch.float32)
+    dev = torch.zeros(100, 128 * 128, device="cuda", dtype=torch.float32)
+    block_table_host = torch.arange(0, 10, device="cuda", dtype=torch.int32)
+    block_table_dev = torch.arange(10, 20, device="cuda", dtype=torch.int32)
+
+    times = []
+    for _ in range(20):
+        start = time.perf_counter_ns()
+        esa_scatter_copy(dev, host, block_table_dev, block_table_host)
+        torch.cuda.synchronize()
+        duration = time.perf_counter_ns() - start
+        times.append(duration)
+        print_green(f"{' '*4}[esa_scatter_copy] host API time: {duration / 1e6:.3f} ms")
+    times = times[10:]
+    duration_seconds = sum(times) / len(times) / 1e9
+    bytes = block_table_dev.shape[0] * dev.shape[1] * dev.element_size()
+    GB = bytes / 1024**3
+    bw = GB/duration_seconds
+    print("[esa_scatter_copy] bw: ", bw)
+    diff = (dev[block_table_dev] - host[block_table_host.cpu()].cuda()).abs()
+    print(f"diff: {diff.max()}, {diff.mean()}")
+    assert diff.max() < 1e-5
+
+
+    block_table_host = torch.arange(30, 40, device="cuda", dtype=torch.int32)
+    block_table_dev = torch.arange(40, 50, device="cuda", dtype=torch.int32)
+    times = []
+    for _ in range(20):
+        start = time.perf_counter_ns()
+        host_ptrs = torch.tensor([host[e].data_ptr() for e in block_table_host], dtype=torch.uint64, device="cuda")
+        dev_ptrs = torch.tensor([dev[e].data_ptr() for e in block_table_dev], dtype=torch.uint64, device="cuda")
+        size_each = host.shape[1] * host.element_size()
+        esa_copy_batch(host_ptrs, dev_ptrs, size_each)
+        torch.cuda.synchronize()
+        duration = time.perf_counter_ns() - start
+        times.append(duration)
+        print_green(f"{' '*4}[esa_copy_batch] host API time: {duration / 1e6:.3f} ms")
+    times = times[10:]
+    duration_seconds = sum(times) / len(times) / 1e9
+    bytes = block_table_dev.shape[0] * dev.shape[1] * dev.element_size()
+    GB = bytes / 1024**3
+    bw = GB/duration_seconds
+    print("[esa_copy_batch] bw: ", bw)
+    diff = (dev[block_table_dev] - host[block_table_host.cpu()].cuda()).abs()
+    print(f"diff: {diff.max()}, {diff.mean()}")
+    assert diff.max() < 1e-5
 
 if __name__ == "__main__":
-    test_esa_repre(100, 128)
-    # test_esa_retrieval(2, 50, 40)
-#     a = torch.randn(1000, 1000, dtype=torch.float32, device="cuda")
-#     b = torch.randn(1000, 1000, dtype=torch.float32, device="cuda")
-#     c = torch.randn(1000, 1000, dtype=torch.float32, device="cuda")
-#     host = torch.randn(100, 128, 128, pin_memory=True, device="cpu", dtype=torch.float32)
-#     dev = torch.zeros(100, 128, 128, device="cuda", dtype=torch.float32)
-#     size = host.numel() * host.element_size()
-#     ptr1 = torch.tensor([host.data_ptr() for _ in range(4)], device="cpu",
-#                         dtype=torch.uint64, pin_memory=True)
-#     ptr2 = torch.zeros(4, device="cuda", dtype=torch.uint64)
-#     size1 = ptr1.numel() * ptr1.element_size()
-#     size2 = ptr2.numel() * ptr2.element_size()
-#     print("sizes: ", size1, size2)
-#     esa_copy(ptr1, ptr2, size1)
-#     print("ptr1: ",ptr1)
-#     print("ptr2: ",ptr2)
-#
-#     # NOTE:Profile: mixed sm_copy kernel and heavy compute kernel
-#     # for i in range(10):
-#     #     esa_copy(host, dev, size)
-#     #     c = torch.matmul(a, b)
-#     # with torch.cuda.nvtx.range(f"beginGGG"):
-#     #     for i in range(100):
-#     #         esa_copy(host, dev, size)
-#     #         c = torch.matmul(a, b)
-#     #     torch.cuda.synchronize()
+    test_esa_retrieval(2, 50, 40)
