@@ -25,3 +25,4 @@ profile_out.sqlite
 test_two_stream
 cuda_sm_copy
 *.so
+diff_map_thrust

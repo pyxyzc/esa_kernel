@@ -336,5 +336,34 @@ def test_esa_scatter_copy():# extract repre
     print(f"diff: {diff.max()}, {diff.mean()}")
     assert diff.max() < 1e-5
 
+def test_topk():
+    a = torch.randn(100, device="cuda", dtype=torch.float32)
+    index = torch.arange(a.shape[0], device="cuda", dtype=torch.int32)
+    index_sorted = torch.arange(a.shape[0], device="cuda", dtype=torch.int32)
+    b = torch.empty_like(a)
+    offset = torch.tensor([0, a.shape[0]], dtype=torch.int32, device="cuda")
+    workspace = torch.zeros(10000, dtype=torch.int32, device="cuda")
+
+    times = []
+    for _ in range(20):
+        start = time.perf_counter_ns()
+        esa_topk(a, index, offset, b, index_sorted, workspace)
+        torch.cuda.synchronize()
+        duration = time.perf_counter_ns() - start
+        times.append(duration)
+    times = times[10:]
+    print('times:', sum(times)/len(times)/1e6)
+
+    a_np = a.cpu().numpy()
+    times = []
+    for _ in range(20):
+        start = time.perf_counter_ns()
+        b_np = np.sort(a_np)
+        duration = time.perf_counter_ns() - start
+        times.append(duration)
+    times = times[10:]
+    print('np_times:', sum(times)/len(times)/1e6)
+
 if __name__ == "__main__":
-    test_esa_retrieval(2, 50, 40)
+    # test_esa_retrieval(2, 50, 40)
+    test_topk()

@@ -347,55 +347,55 @@ extern "C" void esa_retrieval_launcher(torch::Tensor query, torch::Tensor repre_
                 if constexpr (std::is_same_v<scalar_t, float>) {
                 retrieval_kernel_fp32<<<numBlocks, numThreads, bytes>>>(reinterpret_cast<float*>(query.data_ptr()),
                         reinterpret_cast<float*>(repre_cache.data_ptr()), reinterpret_cast<float*>(score.data_ptr()), repre_index.data_ptr<int>(), q_index.data_ptr<int>(), num_q_heads, num_k_heads, dim, s);
-                void* temp_workspace = nullptr;
-                size_t temp_bytes = 0;
-                cub::DeviceSegmentedRadixSort::SortPairsDescending(
-                        temp_workspace, temp_bytes,
-                        score.data_ptr<float>(),  score_sorted.data_ptr<float>(),
-                        index.data_ptr<int>(), index_sorted.data_ptr<int>(),
-                        s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
-                temp_workspace = workspace.data_ptr<int>();
-                cub::DeviceSegmentedRadixSort::SortPairsDescending(
-                        temp_workspace, temp_bytes,
-                        score.data_ptr<float>(),  score_sorted.data_ptr<float>(),
-                        index.data_ptr<int>(), index_sorted.data_ptr<int>(),
-                        s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
+                // void* temp_workspace = nullptr;
+                // size_t temp_bytes = 0;
+                // cub::DeviceSegmentedRadixSort::SortPairsDescending(
+                //         temp_workspace, temp_bytes,
+                //         score.data_ptr<float>(),  score_sorted.data_ptr<float>(),
+                //         index.data_ptr<int>(), index_sorted.data_ptr<int>(),
+                //         s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
+                // temp_workspace = workspace.data_ptr<int>();
+                // cub::DeviceSegmentedRadixSort::SortPairsDescending(
+                //         temp_workspace, temp_bytes,
+                //         score.data_ptr<float>(),  score_sorted.data_ptr<float>(),
+                //         index.data_ptr<int>(), index_sorted.data_ptr<int>(),
+                //         s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
                 } else if constexpr (std::is_same_v<scalar_t, at::Half>) {
                 retrieval_kernel_fp16<<<numBlocks, numThreads, bytes>>>(reinterpret_cast<__half*>(query.data_ptr()),
                         reinterpret_cast<__half*>(repre_cache.data_ptr()), reinterpret_cast<__half*>(score.data_ptr()), repre_index.data_ptr<int>(), q_index.data_ptr<int>(), num_q_heads, num_k_heads, dim, s);
-                void* temp_workspace = nullptr;
-                size_t temp_bytes = 0;
-                cub::DeviceSegmentedRadixSort::SortPairsDescending(
-                        temp_workspace, temp_bytes,
-                        reinterpret_cast<__half*>(score.data_ptr()),
-                        reinterpret_cast<__half*>(score_sorted.data_ptr()),
-                        index.data_ptr<int>(), index_sorted.data_ptr<int>(),
-                        s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
-                temp_workspace = workspace.data_ptr<int>();
-                cub::DeviceSegmentedRadixSort::SortPairsDescending(
-                        temp_workspace, temp_bytes,
-                        reinterpret_cast<__half*>(score.data_ptr()),
-                        reinterpret_cast<__half*>(score_sorted.data_ptr()),
-                        index.data_ptr<int>(), index_sorted.data_ptr<int>(),
-                        s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
+                // void* temp_workspace = nullptr;
+                // size_t temp_bytes = 0;
+                // cub::DeviceSegmentedRadixSort::SortPairsDescending(
+                //         temp_workspace, temp_bytes,
+                //         reinterpret_cast<__half*>(score.data_ptr()),
+                //         reinterpret_cast<__half*>(score_sorted.data_ptr()),
+                //         index.data_ptr<int>(), index_sorted.data_ptr<int>(),
+                //         s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
+                // temp_workspace = workspace.data_ptr<int>();
+                // cub::DeviceSegmentedRadixSort::SortPairsDescending(
+                //         temp_workspace, temp_bytes,
+                //         reinterpret_cast<__half*>(score.data_ptr()),
+                //         reinterpret_cast<__half*>(score_sorted.data_ptr()),
+                //         index.data_ptr<int>(), index_sorted.data_ptr<int>(),
+                //         s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
                 } else if constexpr (std::is_same_v<scalar_t, at::BFloat16>) {
                     retrieval_kernel_bf16<<<numBlocks, numThreads, bytes>>>(reinterpret_cast<__nv_bfloat16*>(query.data_ptr()),
                             reinterpret_cast<__nv_bfloat16*>(repre_cache.data_ptr()), reinterpret_cast<__nv_bfloat16*>(score.data_ptr()), repre_index.data_ptr<int>(), q_index.data_ptr<int>(), num_q_heads, num_k_heads, dim, s);
-                    void* temp_workspace = nullptr;
-                    size_t temp_bytes = 0;
-                    cub::DeviceSegmentedRadixSort::SortPairsDescending(
-                            temp_workspace, temp_bytes,
-                            reinterpret_cast<__nv_bfloat16*>(score.data_ptr()),
-                            reinterpret_cast<__nv_bfloat16*>(score_sorted.data_ptr()),
-                            index.data_ptr<int>(), index_sorted.data_ptr<int>(),
-                            s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
-                    temp_workspace = workspace.data_ptr<int>();
-                    cub::DeviceSegmentedRadixSort::SortPairsDescending(
-                            temp_workspace, temp_bytes,
-                            reinterpret_cast<__nv_bfloat16*>(score.data_ptr()),
-                            reinterpret_cast<__nv_bfloat16*>(score_sorted.data_ptr()),
-                            index.data_ptr<int>(), index_sorted.data_ptr<int>(),
-                            s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
+                    // void* temp_workspace = nullptr;
+                    // size_t temp_bytes = 0;
+                    // cub::DeviceSegmentedRadixSort::SortPairsDescending(
+                    //         temp_workspace, temp_bytes,
+                    //         reinterpret_cast<__nv_bfloat16*>(score.data_ptr()),
+                    //         reinterpret_cast<__nv_bfloat16*>(score_sorted.data_ptr()),
+                    //         index.data_ptr<int>(), index_sorted.data_ptr<int>(),
+                    //         s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
+                    // temp_workspace = workspace.data_ptr<int>();
+                    // cub::DeviceSegmentedRadixSort::SortPairsDescending(
+                    //         temp_workspace, temp_bytes,
+                    //         reinterpret_cast<__nv_bfloat16*>(score.data_ptr()),
+                    //         reinterpret_cast<__nv_bfloat16*>(score_sorted.data_ptr()),
+                    //         index.data_ptr<int>(), index_sorted.data_ptr<int>(),
+                    //         s, batch, batch_offset.data_ptr<int>(), batch_offset.data_ptr<int>() + 1);
                 }
     }));
 }
