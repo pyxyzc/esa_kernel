@@ -81,13 +81,6 @@ def main():
     nvtx.range_pop()
 
     print(f"All callbacks finished. Collected {len(results)} results.")
-    # Print a few results
-    shown = 0
-    for h, (idx, val) in results.items():
-        print(f"handle={h} min_idx={idx} min_val={val:.6f}")
-        shown += 1
-        if shown >= 5:
-            break
 
 if __name__ == "__main__":
     main()

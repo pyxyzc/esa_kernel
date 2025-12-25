@@ -9,6 +9,9 @@
 #include <atomic>
 #include <vector>
 #include <limits>
+#include <thread>
+#include <condition_variable>
+#include <deque>
 
 namespace {
 
@@ -45,24 +48,75 @@ std::mutex g_mutex;
 std::unordered_map<int, std::unique_ptr<Context>> g_contexts;
 int g_next_handle = 1;
 
-void CUDART_CB host_callback(void* userData) {
-    nvtxRangePushA("host_callback_argmin");
-    Context* ctx = reinterpret_cast<Context*>(userData);
-    // Compute argmin on CPU over host_ptr[0..N)
-    float min_val = std::numeric_limits<float>::infinity();
-    int min_idx = -1;
-    float* data = ctx->host_ptr;
-    int N = ctx->N;
-    for (int i = 0; i < N; ++i) {
-        float v = data[i];
-        if (v < min_val) {
-            min_val = v;
-            min_idx = i;
+// Lightweight CPU worker to handle heavy post-D2H work outside CUDA driver threads.
+std::mutex w_mutex;
+std::condition_variable w_cv;
+std::deque<Context*> w_queue;
+std::atomic<bool> w_started{false};
+std::atomic<bool> w_running{false};
+std::thread w_thread;
+
+void worker_loop() {
+    // Optional marker that the worker thread started.
+    nvtxRangePushA("worker_thread_start");
+    nvtxRangePop();
+
+    while (w_running.load(std::memory_order_acquire)) {
+        Context* job = nullptr;
+        {
+            std::unique_lock<std::mutex> lk(w_mutex);
+            w_cv.wait(lk, [] {
+                return !w_queue.empty() || !w_running.load(std::memory_order_acquire);
+            });
+            if (!w_running.load(std::memory_order_acquire)) break;
+            job = w_queue.front();
+            w_queue.pop_front();
+        }
+
+        if (job) {
+            nvtxRangePushA("worker_argmin");
+            float min_val = std::numeric_limits<float>::infinity();
+            int min_idx = -1;
+            float* data = job->host_ptr;
+            int N = job->N;
+            for (int i = 0; i < N; ++i) {
+                float v = data[i];
+                if (v < min_val) {
+                    min_val = v;
+                    min_idx = i;
+                }
+            }
+            job->result_idx = min_idx;
+            job->result_val = min_val;
+            job->ready.store(1, std::memory_order_release);
+            nvtxRangePop();
         }
     }
-    ctx->result_idx = min_idx;
-    ctx->result_val = min_val;
-    ctx->ready.store(1, std::memory_order_release);
+}
+
+void ensure_worker_started() {
+    bool expected = false;
+    if (w_started.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        w_running.store(true, std::memory_order_release);
+        w_thread = std::thread(worker_loop);
+        // Detached for simplicity in this demo; process exit will clean it up.
+        w_thread.detach();
+    }
+}
+
+void enqueue_job(Context* ctx) {
+    {
+        std::lock_guard<std::mutex> lk(w_mutex);
+        w_queue.push_back(ctx);
+    }
+    w_cv.notify_one();
+}
+
+void CUDART_CB host_callback(void* userData) {
+    nvtxRangePushA("host_callback_enqueue");
+    Context* ctx = reinterpret_cast<Context*>(userData);
+    // Defer heavy work to a standalone CPU worker thread to avoid blocking CUDA driver threads.
+    enqueue_job(ctx);
     nvtxRangePop();
 }
 
@@ -108,6 +162,7 @@ int launch_async(torch::Tensor q, torch::Tensor k, torch::Tensor host_out) {
     // Use current PyTorch stream
     auto s = at::cuda::getCurrentCUDAStream();
     cudaStream_t stream = s.stream();
+    ensure_worker_started();
 
     // Launch kernel
     nvtxRangePushA("enqueue: row_dot kernel");
