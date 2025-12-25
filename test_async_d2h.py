@@ -17,7 +17,7 @@ def main():
     device = "cuda"
     N = 500  # number of rows
     D = 1024      # feature dimension
-    iters = 5
+    iters = 10
 
     handles = []
     host_buffers = []
@@ -30,6 +30,11 @@ def main():
     handles.append(h)
     host_buffers.append(host_out)
 
+    torch.cuda.synchronize()
+    time.sleep(0.2)
+    q = torch.randn(N, D, device=device, dtype=torch.float32)
+    k = torch.randn(N, D, device=device, dtype=torch.float32)
+    host_out = torch.empty(N, dtype=torch.float32, device="cpu", pin_memory=True)
 
     # Launch loop without synchronizing after D2H
     start = time.time()
@@ -37,10 +42,6 @@ def main():
         nvtx.range_push(f"iter_{t:02d}")
 
         # Create fresh inputs and a dedicated pinned output buffer per iteration to avoid aliasing
-        q = torch.randn(N, D, device=device, dtype=torch.float32)
-        k = torch.randn(N, D, device=device, dtype=torch.float32)
-        host_out = torch.empty(N, dtype=torch.float32, device="cpu", pin_memory=True)
-
         nvtx.range_push("enqueue_launch_async")
         t0 = time.time()
         h = async_ext.launch_async(q, k, host_out)
