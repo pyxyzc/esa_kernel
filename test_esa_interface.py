@@ -53,6 +53,10 @@ def load_module():
 
 esa_lib = load_module()
 esa_retrieval = esa_lib.esa_retrieval
+esa_retrieval_poll = esa_lib.esa_retrieval_poll
+esa_retrieval_cleanup = esa_lib.esa_retrieval_cleanup
+esa_retrieval_pending = esa_lib.esa_retrieval_pending
+esa_retrieval_shutdown = esa_lib.esa_retrieval_shutdown
 esa_topk = esa_lib.esa_topk
 esa_repre = esa_lib.esa_repre
 esa_copy = esa_lib.esa_copy
@@ -101,6 +105,11 @@ def test_esa_retrieval(batch_size, num_repre_blocks, num_q_heads):
     score = torch.zeros(total_blocks, dtype = dtype).cuda()
     score_sorted = torch.zeros(total_blocks, dtype = dtype).cuda()
 
+    # Pinned CPU outputs for async D2H + CPU argsort
+    score_cpu = torch.empty(total_blocks, dtype=dtype, device="cpu", pin_memory=True)
+    score_sorted_cpu = torch.empty(total_blocks, dtype=dtype, device="cpu", pin_memory=True)
+    index_sorted_cpu = torch.empty(total_blocks, dtype=torch.int32, device="cpu", pin_memory=True)
+
     index_sorted = torch.arange(0, total_blocks, dtype=torch.int32).cuda()
     batch_offset = []
     for i in range(batch_size + 1):
@@ -130,12 +139,22 @@ def test_esa_retrieval(batch_size, num_repre_blocks, num_q_heads):
     Output.index = repre_index
     Output.score_sorted = score_sorted
     Output.index_sorted = index_sorted
+    Output.score_cpu = score_cpu
+    Output.score_sorted_cpu = score_sorted_cpu
+    Output.index_sorted_cpu = index_sorted_cpu
 
     start = time.perf_counter_ns()
-    esa_retrieval(Input, Output)
-    torch.cuda.synchronize()
+    handle = esa_retrieval(Input, Output)
+    # Poll asynchronously for CPU argsort completion; do not force device sync
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        ready = esa_retrieval_poll(handle)
+        if ready == 1:
+            break
+        time.sleep(0.001)
+    assert esa_retrieval_cleanup(handle) == 1
     duration = time.perf_counter_ns() - start
-    print_green(f"{' '*4}esa_retrieval host API time: {duration/1e6:.3f} ms")
+    print_green(f"{' '*4}esa_retrieval host API time (enqueue + async completion): {duration/1e6:.3f} ms")
 
     def naive_retrieval():
         query_batched = query[q_index].to(torch.float32)
@@ -152,10 +171,23 @@ def test_esa_retrieval(batch_size, num_repre_blocks, num_q_heads):
     duration = time.perf_counter_ns() - start
     print_red(f"{' '*4}naive_retrieval host API time: {duration/1e6:.3f} ms")
 
+    # Validate unsorted score values (GPU vs naive GPU)
     diff = (score - score_gt).abs()
     print_blue(f"{' '*4}score diff: {diff.mean():.3f}(mean), {diff.max():.3f}(max)")
-    diff_index = (index_sorted - index_gt).abs().to(torch.float32)
-    print_blue(f"{' '*4}index diff: {diff_index.mean():.0f}(mean), {diff_index.max():.0f}(max)")
+
+    # Validate CPU argsort vs naive result
+    diff_index = (index_sorted_cpu - index_gt.cpu().to(torch.int32)).abs().to(torch.float32)
+    print_blue(f"{' '*4}index diff (CPU argsort vs naive): {diff_index.mean():.0f}(mean), {diff_index.max():.0f}(max)")
+
+    # Optionally validate score_sorted_cpu order matches
+    # Build naive sorted scores on CPU
+    score_sorted_naive = torch.cat([
+        score_gt[s:t][score_gt[s:t].argsort(descending=True)]
+        for s, t in zip(batch_offset[:-1], batch_offset[1:])
+    ]).cpu().to(score_sorted_cpu.dtype)
+    score_sorted_diff = (score_sorted_cpu - score_sorted_naive).abs()
+    print_blue(f"{' '*4}score_sorted diff: {score_sorted_diff.mean():.3f}(mean), {score_sorted_diff.max():.3f}(max)")
+
     print("")
     assert diff.mean() < 1e-3
 

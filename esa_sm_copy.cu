@@ -90,7 +90,8 @@ extern "C" void esa_copy(torch::Tensor src, torch::Tensor dst, size_t size)
     dim3 numThreads = {1024};
     int totalThreads = ceildiv(size, CUDA_TRANS_UNIT_SIZE);
     dim3 numBlocks = {static_cast<unsigned int>(ceildiv(totalThreads, numThreads.x))};
-    CudaCopyKernel<<<numBlocks, numThreads>>>(
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+    CudaCopyKernel<<<numBlocks, numThreads, 0, stream>>>(
         (const void*)src.data_ptr(), (void*)dst.data_ptr(), size);
 }
 
@@ -101,7 +102,8 @@ extern "C" void esa_copy_batch(torch::Tensor src_ptrs, torch::Tensor dst_ptrs, i
     int num = src_ptrs.size(0);
     int totalThreads = ceildiv(size, CUDA_TRANS_UNIT_SIZE);
     dim3 numBlocks = {static_cast<unsigned int>(ceildiv(totalThreads, numThreads.x))};
-    CudaCopyKernel<<<numBlocks, numThreads>>>(
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+    CudaCopyKernel<<<numBlocks, numThreads, 0, stream>>>(
         (const void**)src_ptrs.data_ptr(), (void**)dst_ptrs.data_ptr(), size, num);
 }
 

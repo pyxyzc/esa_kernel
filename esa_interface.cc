@@ -8,8 +8,14 @@
 
 namespace py = pybind11;
 
-extern "C" void esa_retrieval_launcher(torch::Tensor query, torch::Tensor repre_cache, torch::Tensor q_index, torch::Tensor repre_index,
-        torch::Tensor batch_offset, torch::Tensor workspace, torch::Tensor score, torch::Tensor score_sorted, torch::Tensor index, torch::Tensor index_sorted, int batch, int s);
+extern "C" int esa_retrieval_launcher(torch::Tensor query, torch::Tensor repre_cache, torch::Tensor q_index, torch::Tensor repre_index,
+        torch::Tensor batch_offset, torch::Tensor workspace, torch::Tensor score, torch::Tensor score_sorted, torch::Tensor index, torch::Tensor index_sorted,
+        torch::Tensor score_cpu, torch::Tensor score_sorted_cpu, torch::Tensor index_sorted_cpu, int batch, int s);
+
+extern "C" int esa_retrieval_poll(int handle);
+extern "C" int esa_retrieval_cleanup(int handle);
+extern "C" int esa_retrieval_pending();
+extern "C" void esa_retrieval_shutdown();
 
 extern "C" void esa_topk(torch::Tensor score, torch::Tensor index, torch::Tensor offsets, torch::Tensor score_out, torch::Tensor index_out, torch::Tensor workspace);
 
@@ -37,10 +43,15 @@ struct RetrievalOutputTensor{
     torch::Tensor index;
     torch::Tensor score_sorted;
     torch::Tensor index_sorted;
+
+    // New CPU pinned outputs for async D2H + host callback argsort
+    torch::Tensor score_cpu;          // 1D pinned CPU tensor [s], same dtype as score
+    torch::Tensor score_sorted_cpu;   // 1D pinned CPU tensor [s], same dtype as score
+    torch::Tensor index_sorted_cpu;   // 1D pinned CPU tensor [s], int32
 };
 
 
-void esa_retrieval(RetrievalInputTensor input, RetrievalOutputTensor output){
+int esa_retrieval(RetrievalInputTensor input, RetrievalOutputTensor output){
     auto query = input.query;
     auto repre_cache = input.repre_cache;
     auto q_index = input.q_index;
@@ -52,7 +63,18 @@ void esa_retrieval(RetrievalInputTensor input, RetrievalOutputTensor output){
     auto index = output.index;
     auto score_sorted = output.score_sorted;
     auto index_sorted = output.index_sorted;
-    esa_retrieval_launcher(query, repre_cache, q_index, repre_index, batch_offset, workspace, score, score_sorted, index, index_sorted, input.batch, input.s);
+
+    // CPU pinned outputs
+    auto score_cpu = output.score_cpu;
+    auto score_sorted_cpu = output.score_sorted_cpu;
+    auto index_sorted_cpu = output.index_sorted_cpu;
+
+    return esa_retrieval_launcher(
+        query, repre_cache, q_index, repre_index,
+        batch_offset, workspace, score, score_sorted, index, index_sorted,
+        score_cpu, score_sorted_cpu, index_sorted_cpu,
+        input.batch, input.s
+    );
 }
 
 
@@ -78,7 +100,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def_readwrite("score", &RetrievalOutputTensor::score)
         .def_readwrite("score_sorted", &RetrievalOutputTensor::score_sorted)
         .def_readwrite("index", &RetrievalOutputTensor::index)
-        .def_readwrite("index_sorted", &RetrievalOutputTensor::index_sorted);
+        .def_readwrite("index_sorted", &RetrievalOutputTensor::index_sorted)
+        .def_readwrite("score_cpu", &RetrievalOutputTensor::score_cpu)
+        .def_readwrite("score_sorted_cpu", &RetrievalOutputTensor::score_sorted_cpu)
+        .def_readwrite("index_sorted_cpu", &RetrievalOutputTensor::index_sorted_cpu);
 
     TORCH_BINDING_COMMON_EXTENSION(esa_retrieval);
     TORCH_BINDING_COMMON_EXTENSION(esa_topk);
@@ -86,4 +111,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     TORCH_BINDING_COMMON_EXTENSION(esa_copy);
     TORCH_BINDING_COMMON_EXTENSION(esa_scatter_copy);
     TORCH_BINDING_COMMON_EXTENSION(esa_copy_batch);
+
+    // Async retrieval helpers
+    m.def("esa_retrieval_poll", &esa_retrieval_poll, "Poll whether CPU argsort finished (returns 0/1)");
+    m.def("esa_retrieval_cleanup", &esa_retrieval_cleanup, "Cleanup a retrieval handle");
+    m.def("esa_retrieval_pending", &esa_retrieval_pending, "Number of pending retrieval contexts");
+    m.def("esa_retrieval_shutdown", &esa_retrieval_shutdown, "Shutdown retrieval worker/callback streams");
 }
