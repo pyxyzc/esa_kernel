@@ -151,7 +151,7 @@ def test_esa_retrieval(batch_size, num_repre_blocks, num_q_heads):
         ready = esa_retrieval_poll(handle)
         if ready == 1:
             break
-        time.sleep(0.001)
+        time.sleep(1 / 1e6)
     assert esa_retrieval_cleanup(handle) == 1
     duration = time.perf_counter_ns() - start
     print_green(f"{' '*4}esa_retrieval host API time (enqueue + async completion): {duration/1e6:.3f} ms")
@@ -190,6 +190,7 @@ def test_esa_retrieval(batch_size, num_repre_blocks, num_q_heads):
 
     print("")
     assert diff.mean() < 1e-3
+    esa_retrieval_shutdown()
 
 
 @pytest.mark.parametrize("num_repre_blocks", [100])
@@ -336,5 +337,4 @@ def test_topk():
     print('np_times:', sum(times)/len(times)/1e6)
 
 if __name__ == "__main__":
-    # test_esa_retrieval(2, 50, 40)
-    test_topk()
+    test_esa_retrieval(2, 50, 40)
